@@ -5,6 +5,7 @@ import (
         "fmt"
         "io/ioutil"
         "net/http"
+        "os/exec"
 )
 
 type GithubRepository struct {
@@ -27,10 +28,11 @@ type GithubPush struct {
 }
 
 func main() {
-        serverCI := http.NewServeMux()
-        serverCI.HandleFunc("/", postReceive)
+		docker()
+        //serverCI := http.NewServeMux()
+        //serverCI.HandleFunc("/", postReceive)
 
-        http.ListenAndServe(":3000", serverCI)
+        //http.ListenAndServe(":3000", serverCI)
 }
 
 func postReceive(w http.ResponseWriter, r *http.Request) {
@@ -59,4 +61,10 @@ func postReceive(w http.ResponseWriter, r *http.Request) {
         }
 }
 
-
+func docker(){
+	out, err := exec.Command("docker", "run", "--rm", "-t", "-v", "/home/maicon/go/src/github.com/maiconio/mini-ci/docker-stuff:/home/docker", "--name", "minici",  "maiconio/minici:dev").Output()
+	if err != nil {
+		fmt.Printf("%s\n", err)
+	}
+	fmt.Printf("%s\n", out)
+}
