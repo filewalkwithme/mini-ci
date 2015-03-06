@@ -1,68 +1,116 @@
 package main
 
 import (
-        "encoding/json"
-        "fmt"
-        "io/ioutil"
-        "net/http"
-        "os/exec"
+	"encoding/json"
+	"fmt"
+	"io/ioutil"
+	"net/http"
+	"os"
+	"os/exec"
 )
 
-type GithubRepository struct {
-        Id       int    `json:"id"`
-        Name     string `json:"name"`
-        FullName string `json:"full_name"`
+/* curl 127.0.0.1:3000 -d '{"ref": "refs/heads/teste", "head_commit": {"id": "abf230d81caf727884a56fae9acf35788d3ae9e7", "message": "teste", "timestamp": "2015-02-25T11:56:09-03:00", "url": "https://github.com/maiconio/portugo/commit/abf230d81caf727884a56fae9acf35788d3ae9e7"}, "repository": {"id": 18707655, "name": "portugo", "full_name": "maiconio/portugo"}}'
+{
+	"ref": 					"refs/heads/teste",
+	"head_commit": {
+		"id": 				"abf230d81caf727884a56fae9acf35788d3ae9e7",
+		"message": 		"teste",
+		"timestamp": 	"2015-02-25T11:56:09-03:00",
+		"url": 				"https://github.com/maiconio/portugo/commit/abf230d81caf727884a56fae9acf35788d3ae9e7"
+	},
+	"repository": {
+		"id": 				18707655,
+		"name": 			"portugo",
+		"full_name": 	"maiconio/portugo"
+	}
+}
+*/
+
+type githubRepository struct {
+	ID       int    `json:"id"`
+	Name     string `json:"name"`
+	FullName string `json:"full_name"`
 }
 
-type GithubCommit struct {
-        Id        string "id"
-        Message   string `json:"message"`
-        Timestamp string `json:"timestamp"`
-        Url       string `json:"url"`
+type githubCommit struct {
+	ID        string `json:"id"`
+	Message   string `json:"message"`
+	Timestamp string `json:"timestamp"`
+	URL       string `json:"url"`
 }
 
-type GithubPush struct {
-        Ref        string           `json:"ref"`
-        Repository GithubRepository `json:"repository"`
-        HeadCommit GithubCommit     `json:"head_commit"`
+type githubPush struct {
+	Ref        string           `json:"ref"`
+	Repository githubRepository `json:"repository"`
+	HeadCommit githubCommit     `json:"head_commit"`
 }
 
 func main() {
-		docker()
-        //serverCI := http.NewServeMux()
-        //serverCI.HandleFunc("/", postReceive)
+	//docker()
+	serverCI := http.NewServeMux()
+	serverCI.HandleFunc("/", postReceive)
 
-        //http.ListenAndServe(":3000", serverCI)
+	http.ListenAndServe(":3000", serverCI)
 }
 
+//proccessGithubPayload unmarshal the github payload and returns the relevant
+//data in a proper structure
+func proccessGithubPayload(r *http.Request) (githubPush, error) {
+	x, _ := ioutil.ReadAll(r.Body)
+	defer r.Body.Close()
+
+	var push githubPush
+	err := json.Unmarshal(x, &push)
+
+	return push, err
+}
+
+//createCommitFolder creates the folder that represents the commit
+//this folder will retain the output returned by the tests
+func createCommitFolder(push githubPush) {
+	//we gonna use this directory to save the output returned by the tests
+	dir := "./repositories/" + push.Repository.FullName + "/" + push.HeadCommit.ID + "/"
+	os.MkdirAll(dir, os.ModeDir|0775)
+}
+
+//isMiniCi verify if we need to run the CI in this push
+//if the project has a file named .mini-ci.yml then we need run the CI
+func isMiniCi(push githubPush) bool {
+	urlYml := "https://api.github.com/repos/" + push.Repository.FullName + "/contents/.mini-ci.yml?ref=" + push.Ref
+	resp, err := http.Get(urlYml)
+	if err == nil {
+		if resp.StatusCode == 200 {
+			return true
+		}
+	}
+
+	return false
+}
+
+//postReceive handles the github webhook.
 func postReceive(w http.ResponseWriter, r *http.Request) {
-        x, _ := ioutil.ReadAll(r.Body)
-        defer r.Body.Close()
+	push, err := proccessGithubPayload(r)
 
-        var push GithubPush
-        err := json.Unmarshal(x, &push)
+	if err == nil {
+		if isMiniCi(push) {
+			fmt.Printf("File .mini-ci.yml found. Lets build this app!\n")
+			//1 - create the commit folder
+			createCommitFolder(push)
 
-        if err == nil {
-                fmt.Printf("%v\n", push)
-                urlYml := "https://api.github.com/repos/" + push.Repository.FullName + "/contents/.mini-ci.yml?ref=" + push.Ref
-                fmt.Printf("GET %v\n", urlYml)
-                resp, err := http.Get(urlYml)
-                if err == nil {
-                        if resp.StatusCode == 200 {
-                                fmt.Printf("File .mini-ci.yml found.Lets build this app!\n")
-                        } else {
-                                fmt.Printf("File .mini-ci.yml not found. Exiting.[%v]\n", resp.Status)
-                        }
-                } else {
-                        fmt.Printf("Err: %v\n", err)
-                }
-        } else {
-                fmt.Printf("Err: %v\n", err)
-        }
+			//2 - then run the docker image, mounting this directory as home
+			docker(push)
+		}
+	} else {
+		fmt.Printf("Err: %v\n", err)
+	}
 }
 
-func docker(){
-	out, err := exec.Command("docker", "run", "--rm", "-t", "-v", "/home/maicon/go/src/github.com/maiconio/mini-ci/docker-stuff:/home/docker", "--name", "minici",  "maiconio/minici:dev").Output()
+//sudo docker run  --rm -e "APP=maiconio/portugo" -e "COMMIT=abf230d81caf727884a56fae9acf35788d3ae9e7" maiconio/minici:dev
+func docker(push githubPush) {
+	currentWorkingDir, _ := os.Getwd()
+	fmt.Println(currentWorkingDir)
+
+	out, err := exec.Command("docker", "run", "--rm", "-e", "APP="+push.Repository.FullName, "-e", "COMMIT="+push.HeadCommit.ID, "-t", "maiconio/minici:dev").Output()
 	if err != nil {
 		fmt.Printf("%s\n", err)
 	}
