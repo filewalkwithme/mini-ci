@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"strings"
 )
 
 /* curl 127.0.0.1:3000 -d '{"ref": "refs/heads/teste", "head_commit": {"id": "abf230d81caf727884a56fae9acf35788d3ae9e7", "message": "teste", "timestamp": "2015-02-25T11:56:09-03:00", "url": "https://github.com/maiconio/portugo/commit/abf230d81caf727884a56fae9acf35788d3ae9e7"}, "repository": {"id": 18707655, "name": "portugo", "full_name": "maiconio/portugo"}}'
@@ -46,6 +48,8 @@ type githubPush struct {
 }
 
 func main() {
+	x, _ := filepath.Abs(filepath.Dir(os.Args[0]))
+	fmt.Println(x)
 	//docker()
 	serverCI := http.NewServeMux()
 	serverCI.HandleFunc("/", postReceive)
@@ -98,21 +102,41 @@ func postReceive(w http.ResponseWriter, r *http.Request) {
 			createCommitFolder(push)
 
 			//2 - then run the docker image, mounting this directory as home
-			docker(push)
+			execDocker(push)
 		}
 	} else {
 		fmt.Printf("Err: %v\n", err)
 	}
 }
 
-//sudo docker run  --rm -e "APP=maiconio/portugo" -e "COMMIT=abf230d81caf727884a56fae9acf35788d3ae9e7" maiconio/minici:dev
-func docker(push githubPush) {
-	currentWorkingDir, _ := os.Getwd()
-	fmt.Println(currentWorkingDir)
+func execDocker(push githubPush) {
+	envApp := "APP=" + push.Repository.FullName
+	envCommit := "COMMIT=" + push.HeadCommit.ID
 
-	out, err := exec.Command("docker", "run", "--rm", "-e", "APP="+push.Repository.FullName, "-e", "COMMIT="+push.HeadCommit.ID, "-t", "maiconio/minici:dev").Output()
+	//run the docker image
+	out, err := exec.Command("docker", "run", "--rm", "-e", envApp, "-e", envCommit, "-t", "maiconio/minici:dev").Output()
 	if err != nil {
 		fmt.Printf("%s\n", err)
+		return
 	}
-	fmt.Printf("%s\n", out)
+
+	//write the output to file
+	fileOut := "./repositories/" + push.Repository.FullName + "/" + push.HeadCommit.ID + "/output"
+	ioutil.WriteFile(fileOut, out, 0644)
+
+	//split the output in lines
+	lines := strings.Split(string(out), "\n")
+
+	//the last line contain the exit code, we need to get len(-2) because the output comes with an \r
+	exitCode := lines[len(lines)-2]
+	exitCode = strings.Replace(exitCode, "\r", "", -1)
+
+	//exitCode = 0 [sucess]
+	//exitCode = 1 [failed]
+	if exitCode == "0" {
+		fmt.Printf("Build Success! =D [%v]\n", exitCode)
+	} else {
+		fmt.Printf("Build Failed![%v]\n", exitCode)
+	}
+
 }
