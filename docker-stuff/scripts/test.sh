@@ -5,10 +5,14 @@ cd /home/docker/go/src/github.com/$APP
 git clone https://github.com/$APP.git /home/docker/go/src/github.com/$APP
 git checkout -q $COMMIT
 
-echo "go build"
-go build
+if [ $? -eq 0 ]; then
+  echo "go build"
+  go build
+fi
 
-echo "go test -v"
-go test -v
+if [ $? -eq 0 ]; then
+  echo "go test -v"
+  go test -v
+fi
 
 echo $?

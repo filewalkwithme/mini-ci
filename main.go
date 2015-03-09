@@ -93,19 +93,30 @@ func isMiniCi(push githubPush) bool {
 
 //postReceive handles the github webhook.
 func postReceive(w http.ResponseWriter, r *http.Request) {
-	push, err := proccessGithubPayload(r)
-
-	if err == nil {
-		if isMiniCi(push) {
-			fmt.Printf("File .mini-ci.yml found. Lets build this app!\n")
-			//1 - create the commit folder
-			createCommitFolder(push)
-
-			//2 - then run the docker image, mounting this directory as home
-			execDocker(push)
+	urlParts := strings.Split(r.URL.Path[1:], "/")
+	if urlParts[0] == "repositories" {
+		fmt.Printf("." + r.URL.Path)
+		tmp, err := ioutil.ReadFile("." + r.URL.Path)
+		if err == nil {
+			w.Write(tmp)
+		} else {
+			w.Write([]byte(err.Error()))
 		}
 	} else {
-		fmt.Printf("Err: %v\n", err)
+		push, err := proccessGithubPayload(r)
+
+		if err == nil {
+			if isMiniCi(push) {
+				fmt.Printf("File .mini-ci.yml found. Lets build this app!\n")
+				//1 - create the commit folder
+				createCommitFolder(push)
+
+				//2 - then run the docker image, mounting this directory as home
+				execDocker(push)
+			}
+		} else {
+			fmt.Printf("Err: %v\n", err)
+		}
 	}
 }
 
@@ -123,6 +134,7 @@ func execDocker(push githubPush) {
 	//write the output to file
 	fileOut := "./repositories/" + push.Repository.FullName + "/" + push.HeadCommit.ID + "/output"
 	ioutil.WriteFile(fileOut, out, 0644)
+	fmt.Printf("%s", string(out))
 
 	//split the output in lines
 	lines := strings.Split(string(out), "\n")
@@ -133,9 +145,21 @@ func execDocker(push githubPush) {
 
 	//exitCode = 0 [sucess]
 	//exitCode = 1 [failed]
+
+	parts := strings.Split(push.Ref, "/")
+	dir1 := parts[0]
+	dir2 := parts[1]
+	fileName := parts[2]
+	fileTree := "./repositories/" + push.Repository.FullName + "/" + dir1 + "/" + dir2 + "/" + fileName
+	os.MkdirAll("./repositories/"+push.Repository.FullName+"/"+dir1+"/"+dir2+"/", os.ModeDir|0775)
 	if exitCode == "0" {
+		err := ioutil.WriteFile(fileTree, []byte("success"), 0644)
+		fmt.Printf("%s\n", err)
+
 		fmt.Printf("Build Success! =D [%v]\n", exitCode)
 	} else {
+		ioutil.WriteFile(fileTree, []byte("failed"), 0644)
+
 		fmt.Printf("Build Failed![%v]\n", exitCode)
 	}
 
