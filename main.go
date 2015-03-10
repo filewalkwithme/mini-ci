@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 )
 
@@ -48,13 +47,36 @@ type githubPush struct {
 }
 
 func main() {
-	x, _ := filepath.Abs(filepath.Dir(os.Args[0]))
-	fmt.Println(x)
-	//docker()
 	serverCI := http.NewServeMux()
-	serverCI.HandleFunc("/", postReceive)
+	serverCI.HandleFunc("/", handleCI)
 
 	http.ListenAndServe(":3000", serverCI)
+}
+
+func handleCI(w http.ResponseWriter, r *http.Request) {
+	urlParts := strings.Split(r.URL.Path[1:], "/")
+	if urlParts[0] == "repositories" {
+		generateBadge(w, r)
+	} else {
+		runTestsAndBuild(w, r)
+	}
+}
+
+func runTestsAndBuild(w http.ResponseWriter, r *http.Request) {
+	push, err := proccessGithubPayload(r)
+
+	if err == nil {
+		if isMiniCi(push) {
+			fmt.Printf("File .mini-ci.yml found. Lets build this app!\n")
+			//1 - create the commit folder
+			createCommitFolder(push)
+
+			//2 - then run the docker image
+			execDocker(push)
+		}
+	} else {
+		fmt.Printf("Err: %v\n", err)
+	}
 }
 
 //proccessGithubPayload unmarshal the github payload and returns the relevant
@@ -67,14 +89,6 @@ func proccessGithubPayload(r *http.Request) (githubPush, error) {
 	err := json.Unmarshal(x, &push)
 
 	return push, err
-}
-
-//createCommitFolder creates the folder that represents the commit
-//this folder will retain the output returned by the tests
-func createCommitFolder(push githubPush) {
-	//we gonna use this directory to save the output returned by the tests
-	dir := "./repositories/" + push.Repository.FullName + "/" + push.HeadCommit.ID + "/"
-	os.MkdirAll(dir, os.ModeDir|0775)
 }
 
 //isMiniCi verify if we need to run the CI in this push
@@ -91,45 +105,12 @@ func isMiniCi(push githubPush) bool {
 	return false
 }
 
-//postReceive handles the github webhook.
-func postReceive(w http.ResponseWriter, r *http.Request) {
-	urlParts := strings.Split(r.URL.Path[1:], "/")
-	if urlParts[0] == "repositories" {
-		result, err := ioutil.ReadFile("." + r.URL.Path)
-		strResult := strings.Replace(string(result), "\n", "", -1)
-		if err == nil {
-			if strResult == "success" {
-				successIcon, _ := ioutil.ReadFile("pass.png")
-				w.Header().Add("content-type", "image/png")
-				w.Write(successIcon)
-			} else if strResult == "failed" {
-				fmt.Printf("result: %v\n", string(result))
-				failIcon, err := ioutil.ReadFile("fail.png")
-				fmt.Printf("err: %v\n", err)
-				w.Header().Add("content-type", "image/png")
-				w.Write(failIcon)
-			} else {
-				w.Write([]byte("Error obtaining build status"))
-			}
-		} else {
-			w.Write([]byte(err.Error()))
-		}
-	} else {
-		push, err := proccessGithubPayload(r)
-
-		if err == nil {
-			if isMiniCi(push) {
-				fmt.Printf("File .mini-ci.yml found. Lets build this app!\n")
-				//1 - create the commit folder
-				createCommitFolder(push)
-
-				//2 - then run the docker image, mounting this directory as home
-				execDocker(push)
-			}
-		} else {
-			fmt.Printf("Err: %v\n", err)
-		}
-	}
+//createCommitFolder creates the folder that represents the commit
+//this folder will retain the output returned by the tests
+func createCommitFolder(push githubPush) {
+	//we gonna use this directory to save the output returned by the tests
+	dir := "./repositories/" + push.Repository.FullName + "/" + push.HeadCommit.ID + "/"
+	os.MkdirAll(dir, os.ModeDir|0775)
 }
 
 func execDocker(push githubPush) {
@@ -148,31 +129,58 @@ func execDocker(push githubPush) {
 	ioutil.WriteFile(fileOut, out, 0644)
 	fmt.Printf("%s", string(out))
 
+	writeBuildStatus(push, string(out))
+}
+
+func writeBuildStatus(push githubPush, cmdOutput string) {
 	//split the output in lines
-	lines := strings.Split(string(out), "\n")
+	lines := strings.Split(cmdOutput, "\n")
 
 	//the last line contain the exit code, we need to get len(-2) because the output comes with an \r
 	exitCode := lines[len(lines)-2]
 	exitCode = strings.Replace(exitCode, "\r", "", -1)
 
-	//exitCode = 0 [sucess]
-	//exitCode = 1 [failed]
-
+	//create the folder that will contain the build result file
 	parts := strings.Split(push.Ref, "/")
 	dir1 := parts[0]
 	dir2 := parts[1]
 	fileName := parts[2]
-	fileTree := "./repositories/" + push.Repository.FullName + "/" + dir1 + "/" + dir2 + "/" + fileName
 	os.MkdirAll("./repositories/"+push.Repository.FullName+"/"+dir1+"/"+dir2+"/", os.ModeDir|0775)
+
+	//file that will store the build result
+	buildResultFile := "./repositories/" + push.Repository.FullName + "/" + dir1 + "/" + dir2 + "/" + fileName
+
+	//exitCode = 0 [sucess]
+	//exitCode = 1 [failed]
 	if exitCode == "0" {
-		err := ioutil.WriteFile(fileTree, []byte("success"), 0644)
-		fmt.Printf("%s\n", err)
-
-		fmt.Printf("Build Success! =D [%v]\n", exitCode)
+		ioutil.WriteFile(buildResultFile, []byte("success"), 0644)
 	} else {
-		ioutil.WriteFile(fileTree, []byte("failed"), 0644)
-
-		fmt.Printf("Build Failed![%v]\n", exitCode)
+		ioutil.WriteFile(buildResultFile, []byte("failed"), 0644)
 	}
+}
 
+func generateBadge(w http.ResponseWriter, r *http.Request) {
+	result, err := ioutil.ReadFile("." + r.URL.Path)
+	strResult := strings.Replace(string(result), "\n", "", -1)
+
+	if err == nil {
+
+		if strResult == "success" {
+			writeBadge(w, "pass.png")
+		} else if strResult == "failed" {
+			writeBadge(w, "fail.png")
+		} else {
+			w.Write([]byte("Error obtaining build status"))
+		}
+
+	} else {
+		w.Write([]byte(err.Error()))
+	}
+}
+
+func writeBadge(w http.ResponseWriter, filename string) {
+	w.Header().Add("content-type", "image/png")
+
+	icon, _ := ioutil.ReadFile(filename)
+	w.Write(icon)
 }
