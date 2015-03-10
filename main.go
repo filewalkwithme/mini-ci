@@ -95,10 +95,22 @@ func isMiniCi(push githubPush) bool {
 func postReceive(w http.ResponseWriter, r *http.Request) {
 	urlParts := strings.Split(r.URL.Path[1:], "/")
 	if urlParts[0] == "repositories" {
-		fmt.Printf("." + r.URL.Path)
-		tmp, err := ioutil.ReadFile("." + r.URL.Path)
+		result, err := ioutil.ReadFile("." + r.URL.Path)
+		strResult := strings.Replace(string(result), "\n", "", -1)
 		if err == nil {
-			w.Write(tmp)
+			if strResult == "success" {
+				successIcon, _ := ioutil.ReadFile("pass.png")
+				w.Header().Add("content-type", "image/png")
+				w.Write(successIcon)
+			} else if strResult == "failed" {
+				fmt.Printf("result: %v\n", string(result))
+				failIcon, err := ioutil.ReadFile("fail.png")
+				fmt.Printf("err: %v\n", err)
+				w.Header().Add("content-type", "image/png")
+				w.Write(failIcon)
+			} else {
+				w.Write([]byte("Error obtaining build status"))
+			}
 		} else {
 			w.Write([]byte(err.Error()))
 		}
