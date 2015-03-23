@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	//"github.com/go-yaml/yaml"
 )
 
 /* curl 127.0.0.1:3000 -d '{"ref": "refs/heads/teste", "head_commit": {"id": "abf230d81caf727884a56fae9acf35788d3ae9e7", "message": "teste", "timestamp": "2015-02-25T11:56:09-03:00", "url": "https://github.com/maiconio/portugo/commit/abf230d81caf727884a56fae9acf35788d3ae9e7"}, "repository": {"id": 18707655, "name": "portugo", "full_name": "maiconio/portugo"}}'
@@ -54,11 +55,14 @@ func main() {
 }
 
 func handleCI(w http.ResponseWriter, r *http.Request) {
-	urlParts := strings.Split(r.URL.Path[1:], "/")
-	if urlParts[0] == "repositories" {
+	if strings.HasSuffix(r.URL.Path, "/badge") {
 		generateBadge(w, r)
+	} else if strings.HasSuffix(r.URL.Path, "/output") {
+		readOutput(w, r)
 	} else {
-		runTestsAndBuild(w, r)
+		if r.URL.Path == "/" {
+			runTestsAndBuild(w, r)
+		}
 	}
 }
 
@@ -94,7 +98,7 @@ func proccessGithubPayload(r *http.Request) (githubPush, error) {
 //isMiniCi verify if we need to run the CI in this push
 //if the project has a file named .mini-ci.yml then we need run the CI
 func isMiniCi(push githubPush) bool {
-	urlYml := "https://api.github.com/repos/" + push.Repository.FullName + "/contents/.mini-ci.yml?ref=" + push.Ref
+	urlYml := "https://api.github.com/repos/" + push.Repository.FullName + "/contents/.mini-ci.yml?ref=" + push.HeadCommit.ID
 	resp, err := http.Get(urlYml)
 	if err == nil {
 		if resp.StatusCode == 200 {
@@ -159,16 +163,25 @@ func writeBuildStatus(push githubPush, cmdOutput string) {
 	}
 }
 
-func generateBadge(w http.ResponseWriter, r *http.Request) {
+func readOutput(w http.ResponseWriter, r *http.Request) {
 	result, err := ioutil.ReadFile("." + r.URL.Path)
+	if err == nil {
+		w.Write([]byte(result))
+	} else {
+		w.Write([]byte(err.Error()))
+	}
+}
+
+func generateBadge(w http.ResponseWriter, r *http.Request) {
+	result, err := ioutil.ReadFile("." + r.URL.Path[:len(r.URL.Path)-6])
 	strResult := strings.Replace(string(result), "\n", "", -1)
 
 	if err == nil {
 
 		if strResult == "success" {
-			writeBadge(w, "pass.png")
+			writeBadge(w, "badges/pass.png")
 		} else if strResult == "failed" {
-			writeBadge(w, "fail.png")
+			writeBadge(w, "badges/fail.png")
 		} else {
 			w.Write([]byte("Error obtaining build status"))
 		}

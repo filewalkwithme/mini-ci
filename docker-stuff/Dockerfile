@@ -14,6 +14,11 @@ ENV GOPATH /home/docker/go
 RUN mkdir --parents /home/docker/go
 
 ADD scripts/startup.sh /home/docker/scripts/startup.sh
-ADD scripts/test.sh /home/docker/scripts/test.sh
+
+ADD keys/id_rsa /root/.ssh/id_rsa
+ADD keys/id_rsa.pub /root/.ssh/id_rsa.pub
+RUN chmod 600 -R /root/.ssh/
+
+ADD minideploy/minideploy /usr/bin/minideploy
 
 CMD ["/home/docker/scripts/startup.sh"]

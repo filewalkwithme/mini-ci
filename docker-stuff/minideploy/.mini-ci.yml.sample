@@ -1,0 +1,10 @@
+deploy-in-this-host:
+maiconio@127.0.0.1:/tmp/portugo
+
+these-files:
+portugo
+olamundo
+
+then-run-these-commands:
+cd /tmp/portugo
+./portugo -arq=olamundo >> itworks
