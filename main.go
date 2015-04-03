@@ -8,25 +8,8 @@ import (
 	"os"
 	"os/exec"
 	"strings"
-	//"github.com/go-yaml/yaml"
+	"time"
 )
-
-/* curl 127.0.0.1:3000 -d '{"ref": "refs/heads/teste", "head_commit": {"id": "abf230d81caf727884a56fae9acf35788d3ae9e7", "message": "teste", "timestamp": "2015-02-25T11:56:09-03:00", "url": "https://github.com/maiconio/portugo/commit/abf230d81caf727884a56fae9acf35788d3ae9e7"}, "repository": {"id": 18707655, "name": "portugo", "full_name": "maiconio/portugo"}}'
-{
-	"ref": 					"refs/heads/teste",
-	"head_commit": {
-		"id": 				"abf230d81caf727884a56fae9acf35788d3ae9e7",
-		"message": 		"teste",
-		"timestamp": 	"2015-02-25T11:56:09-03:00",
-		"url": 				"https://github.com/maiconio/portugo/commit/abf230d81caf727884a56fae9acf35788d3ae9e7"
-	},
-	"repository": {
-		"id": 				18707655,
-		"name": 			"portugo",
-		"full_name": 	"maiconio/portugo"
-	}
-}
-*/
 
 type githubRepository struct {
 	ID       int    `json:"id"`
@@ -55,6 +38,8 @@ func main() {
 }
 
 func handleCI(w http.ResponseWriter, r *http.Request) {
+	fmt.Printf("\n-->Request: %v\n\n", r)
+
 	if strings.HasSuffix(r.URL.Path, "/badge") {
 		generateBadge(w, r)
 	} else if strings.HasSuffix(r.URL.Path, "/output") {
@@ -67,6 +52,7 @@ func handleCI(w http.ResponseWriter, r *http.Request) {
 }
 
 func runTestsAndBuild(w http.ResponseWriter, r *http.Request) {
+	fmt.Printf("r: %v\n", r.RequestURI)
 	push, err := proccessGithubPayload(r)
 
 	if err == nil {
@@ -121,12 +107,17 @@ func execDocker(push githubPush) {
 	envApp := "APP=" + push.Repository.FullName
 	envCommit := "COMMIT=" + push.HeadCommit.ID
 
+	fmt.Printf("Run the Docker image\n")
+	fmt.Printf("docker run --rm -e '%v' -e '%v' -t minici:dev \n", envApp, envCommit)
+
 	//run the docker image
-	out, err := exec.Command("docker", "run", "--rm", "-e", envApp, "-e", envCommit, "-t", "maiconio/minici:dev").Output()
+	out, err := exec.Command("docker", "run", "--rm", "-e", envApp, "-e", envCommit, "-t", "minici:dev").Output()
 	if err != nil {
 		fmt.Printf("%s\n", err)
 		return
 	}
+
+	fmt.Printf("Write the output to file\n")
 
 	//write the output to file
 	fileOut := "./repositories/" + push.Repository.FullName + "/" + push.HeadCommit.ID + "/output"
@@ -192,7 +183,12 @@ func generateBadge(w http.ResponseWriter, r *http.Request) {
 }
 
 func writeBadge(w http.ResponseWriter, filename string) {
+	const layout = "Mon, 02 Jan 2006 15:04:05 GMT"
+
 	w.Header().Add("content-type", "image/png")
+	w.Header().Set("cache-control", "no-cache, private")
+	w.Header().Set("date", time.Now().UTC().Format(layout))
+	w.Header().Set("expires", "Fri, 01 Jan 1984 00:00:00 GMT")
 
 	icon, _ := ioutil.ReadFile(filename)
 	w.Write(icon)
